@@ -1,6 +1,6 @@
 # go1-deploy
 
-Deployment kit for Unitree Go1 Edu. Forked from [montrealrobotics/go1-deploy](https://github.com/montrealrobotics/go1-deploy). Modified for MRSS2025 to support sending joint commands at lower frequencies and external policy mode.
+Deployment kit for Unitree Go1 Edu. Modified for MRSS to support sending joint commands at lower frequencies and external policy mode.
 
 This repository can be deployed in the following configurations:
 1. External PC/NUC with LAN (Preferred) (Tested)
@@ -8,9 +8,6 @@ This repository can be deployed in the following configurations:
 3. Internal Computer of the Go1 
 
 > [!NOTE]
-> **Important Resources**
-> - [MRSS2024 Instructions](https://hackmd.io/@shoddy-robots/go1-instructions2024)
-> - - -
 > **Documentation**
 > - [Go1 Documentation - Unitree](https://unitree-docs.readthedocs.io/en/latest/get_started/Go1_Edu.html#)
 > - [Go1 Documentation - Trossen Robotics](https://docs.trossenrobotics.com/unitree_go1_docs/index.html)
@@ -20,11 +17,8 @@ This repository can be deployed in the following configurations:
 > - [Unitree Software Downloads](https://www.unitree.com/download)
 > - - -
 
-> [!TIP]
-> Most of the code and instructions are based on Florian's work from last year's competition ([link](https://hackmd.io/@shoddy-robots/go1-instructions2024)).
-
 ## Dependencies 
-- Python 3.8 (required by unitree_legged_sdk)
+- Python 3.8
 - PyTorch
 - matplotlib
 - numpy<1.24
@@ -66,17 +60,21 @@ ssh unitree@192.168.123.15
 
 For more information about SSH, see the [network documentation](https://docs.trossenrobotics.com/unitree_go1_docs/getting_started/network.html#ssh).
 
+#### Connecting the robot to the internet
+
+Edit the wired connection that you previously configured:
+In ipv4 settings, tab IPv4, switch IPv4 method from manual to 'Shared to other computers', Apply and then toggle the connection off then on.
+
 ### 2. Installation 
 
-> [!NOTE]
-> The conda environment are already installed on the grey and black robots. You'll have to copy this repository though, 
-> theirs is not up to date.
+On one of the robot's Jetsons, we have been using 192.168.123.14, run the following commands:
 
-On the target machine, run the following commands:
 
 1. **Clone the repository:**
    ```bash
-   git clone https://github.com/csirois14/go1-deploy
+   mkdir /home/unitree/MRSS
+   cd /home/unitree/MRSS
+   git clone https://github.com/MontrealRoboticsSummerSchool/go1-deploy
    cd go1-deploy
    ```
 
@@ -88,8 +86,10 @@ On the target machine, run the following commands:
    cmake ../
    make
    ```
+3. **Set the python path for the SDK**
+   echo "export PYTHONPATH="/home/unitree/MRSS/go1-deploy/unitree_legged_sdk/lib/python/arm64/:${PYTHONPATH}"" >> ~/.bashrc
 
-3. **Test the installation:**
+4. **Test the installation:**
    1. **Kill sport mode** (required to prevent command conflicts):
       - Lay down the robot: L2 + B
       - Run: `./unitree_legged_sdk/kill-sport-mode.sh`
@@ -101,26 +101,25 @@ On the target machine, run the following commands:
       ```
 
 ### 3. Conda Environment
+Conda is installed on the robots and there should be an existing environment called depl.
+If you need to reinstall:
 
-> [!IMPORTANT]
-> I did not have to set this up on a robot, so I don't know the exact steps. Florian used a router to give the robots internet access. I explained it briefly to Michael, and he might be able to help with setting up new robots.
-> 
-> Here are his notes from [last year](https://hackmd.io/@shoddy-robots/go1-instructions2024#1-Boot-the-robot-and-get-it-ready):
-> 
-> **For Jetson .14 (deployment):**
-> - SSH to Jetson at IP .14
-> - Rename Unitree/autostarts to something else, then reboot
-> - Set default route to Raspberry Pi at IP .161
-> - Install miniforge (depl environment, Python 3.8)
-> - Install the deploy repo under ~/MRSS24 directory
-> 
-> **For Jetson .13 (control):**
-> - SSH to Jetson at IP .13
-> - Rename Unitree/autostarts to something else, then reboot
-> - Set default route to Raspberry Pi at IP .161
-> - Install miniforge (ctrl environment, Python 3.10, with opencv-python)
-> 
-> See also [Go1_Real readme](docs/Go1_Real.md) for power-on instructions and network configuration.
+1. ** Install conda**
+   ```bash
+   curl -L -o miniforge.sh https://github.com/conda-forge/miniforge/releases/latest/download/Miniforge3-Linux-aarch64.sh \
+    && bash miniforge.sh -b -p /root/miniforge3 && rm miniforge.sh
+    ```
+
+2. **Create the environment**
+   ```bash
+   cd /home/unitree/MRSS/go1-deploy
+   conda env create -f environment.yml
+   ```
+
+3. **Activate environment**
+   ```bash
+   conda activate depl
+   ```
 
 ## Deployment
 
@@ -158,15 +157,15 @@ Run policy inference onboard the robot at 50 Hz. Specify the model file when cal
 
 ```bash
 # 1. Copy your policy to the robot
-scp ~/path/to/your/policy/_exported.pt unitree@192.168.123.14:~/MRSS25/go1-deploy/weights/policy.pt
+scp ~/path/to/your/policy/_exported.pt unitree@192.168.123.14:~/MRSS/go1-deploy/weights/policy.pt
 
 # 2. SSH to the robot and run
 ssh 192.168.123.14
 # password: 123
 conda activate depl
-cd ~/MRSS25/go1-deploy
+cd ~/MRSS/go1-deploy
 bash unitree_legged_sdk/kill-sport-mode.sh # password: 123
-python deploy.py --model weights/policy.pt
+sudo chrt -f 99 $(which python) deploy.py --model weights/policy.pt # runs deploy.py with high priority
 ```
 
 **Safety procedure:**
@@ -186,9 +185,10 @@ In this mode, actions are computed externally and sent to the robot via TCP comm
 ```bash
 ssh 192.168.123.14 # password: 123
 conda activate depl
-cd ~/MRSS25/go1-deploy
+cd ~/MRSS/go1-deploy
 bash unitree_legged_sdk/kill-sport-mode.sh # password: 123
 python deploy.py --server --external-policy
+sudo chrt -f 99 $(which python) deploy.py --server --external-policy # runs deploy.py with high priority
 ```
 
 The robot will wait to receive actions over the TCP connection.
@@ -198,7 +198,7 @@ The robot will wait to receive actions over the TCP connection.
 Enable server mode to receive velocity commands via TCP instead of the joystick:
 
 ```bash
-python deploy.py --model weights/policy.pt --server
+sudo chrt -f 99 $(which python) deploy.py --model weights/policy.pt --server # runs deploy.py with high priority
 ```
 
 > [!NOTE]
@@ -248,7 +248,7 @@ We provide scripts to test that server mode (bidirectional communication) works 
    ssh 192.168.123.14
    # password: 123
    conda activate depl
-   cd ~/MRSS25/go1-deploy
+   cd ~/MRSS/go1-deploy
    bash unitree_legged_sdk/kill-sport-mode.sh # password: 123
    python deploy.py --model weights/<policy>.pt --server
    ```
@@ -330,4 +330,5 @@ gst-launch-1.0 udpsrc port=9201 ! application/x-rtp, media=video, encoding-name=
 ```
 
 > [!TIP]
-> There are several test scripts available (created with help from Claude) to test camera functionality. You probably don't need to install UnitreecameraSDK on your laptop - you can likely read the images directly with Python. 
+> There are several test scripts available (created with help from Claude) to test camera functionality. You probably don't need to install UnitreecameraSDK on your laptop - you can likely read the images directly with Python.
+

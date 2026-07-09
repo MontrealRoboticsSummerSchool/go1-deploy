@@ -1,0 +1,51 @@
+services:
+  go1-deploy_jp45:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        - BASE_TAG=r32.5.0
+    image: go1-policy-deploy:latest
+    container_name: go1_deploy_container45
+    volumes:
+      - .:/workspace
+    working_dir: /workspace
+    entrypoint: [ "/bin/bash", "-c", "source /root/.bashrc && exec /bin/bash" ]
+    command: ""
+    stdin_open: true
+    tty: true
+    restart: always
+    network_mode: "host"
+    pid: "host"
+    runtime: nvidia
+    privileged: true
+    ulimits:
+      rtprio: 99
+    cap_add:
+      - SYS_NICE
+
+  go1-deploy_jp44:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        - BASE_TAG=r32.4.3
+    image: go1-policy-deploy:latest
+    container_name: go1_deploy_container44
+    volumes:
+      - .:/workspace
+    working_dir: /workspace
+    entrypoint: [ "/bin/bash", "-c", "source /root/.bashrc && exec /bin/bash" ]
+    command: ""
+    stdin_open: true
+    tty: true
+    restart: always
+    network_mode: "host"
+    pid: "host"
+    runtime: nvidia
+    privileged: true
+    ulimits:
+      rtprio: 99
+    cap_add:
+      - SYS_NICE
+
