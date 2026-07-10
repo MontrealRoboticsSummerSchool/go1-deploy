@@ -62,8 +62,47 @@ For more information about SSH, see the [network documentation](https://docs.tro
 
 #### Connecting the robot to the internet
 
+An internet connection can be shared with the robot over ethernet.
+
+<details>
+  <summary>If the robot has not previously been configured</summary>
+
+   Edit /etc/rc.local and add the following:
+   ```
+   ip addr add 10.42.0.50/24 dev eth0 label eth0:1
+   ```
+
+Edit /etc/dhcpcd.conf and add nogateway in the section for eth0:
+   ```
+   interface eth0
+   static ip_address=192.168.123.161/24
+   nogateway
+   ```
+
+Add this to /lib/dhcpcd/dhcpcd-hooks/99-remote-gateway (create this file):
+
+```
+if [ "$reason" = "BOUND" ] || [ "$reason" = "STATIC" ] || [ "$reason" = "ROUTERADVERT" ]; then
+    
+    ip route replace default via 10.42.0.1 dev eth0 metric 100
+    
+    echo "nameserver 8.8.8.8" > /etc/resolv.conf
+    echo "nameserver 8.8.4.4" >> /etc/resolv.conf
+fi
+```
+</details>
+
+**On the machine connected to the go1 by ethernet**
+
 Edit the wired connection that you previously configured:
+
 In ipv4 settings, tab IPv4, switch IPv4 method from manual to 'Shared to other computers', Apply and then toggle the connection off then on.
+
+This should give your machine's ethernet interface the ip 10.42.0.1, the IP on the robot that you should connect to is 10.42.0.50:
+
+```
+ssh pi@10.42.0.50 # passwd 123
+```
 
 ### 2. Installation 
 
@@ -120,6 +159,55 @@ If you need to reinstall:
    ```bash
    conda activate depl
    ```
+## Docker
+The go1-deploy code can be run in a docker container.
+
+Clone this repository:
+```bash
+mkdir /home/unitree/MRSS
+cd /home/unitree/MRSS
+git clone https://github.com/MontrealRoboticsSummerSchool/go1-deploy
+cd go1-deploy
+```
+There are two versions of the docker image, one for Jetpack 4.4 and one for jetpack 4.5.
+
+To build for jetpack 4.4:
+```
+docker compose build go1-deploy_jp44
+```
+
+And for jetpack 4.5:
+```
+docker compose build go1-deploy_jp45
+```
+
+Then bring up the container:
+```
+docker compose up go1-deploy_jp44 -d
+```
+OR
+```
+docker compose up go1-deploy_jp45 -d
+```
+
+Enter the container:
+```
+docker exec -it go1_deploy_container44 bash
+```
+
+OR
+```
+docker exec -it go1_deploy_container45 bash
+```
+activate the conda environment:
+```
+conda activate depl
+```
+
+and launch the deploy script with high priority:
+```
+chrt -f 99 $(which python) deploy.py --model weights/policy.pt
+```
 
 ## Deployment
 
