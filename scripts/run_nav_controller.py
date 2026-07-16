@@ -2,7 +2,9 @@
 """
 Script for running the Navigation Controller.
 
-This script receives observations from the robot and computes the velocity commands with the NavController. It can be used when the robot is running with a **local policy** with the `--server` flag.
+This script receives observations from the robot and computes the velocity commands with the NavController.
+It can be used when the robot is running with a **local policy** with the `--server` flag.
+
 """
 
 import socket
@@ -10,7 +12,12 @@ import struct
 import time
 import torch
 import numpy as np
+import subprocess
+import threading
+import queue
+import sys
 
+import cv2
 from go1_navigation.nav_controller import NavController
 
 # Constants matching policy_runner.py
@@ -24,6 +31,111 @@ LOOP_FREQ = 50  # 50 Hz
 NAV_CONTROLLER_FREQ = 5  # 5 Hz
 
 
+class SocketGStreamerCamera:
+    """
+    Launches GStreamer as an external process and reads raw bytes over a local TCP socket.
+    """
+    def __init__(self, cam_id=1, width=1856, height=800, ip_last_segment="13"):
+        self.width = width
+        self.height = height
+        self.cam_id = cam_id
+        self.ip_last_segment = ip_last_segment
+
+        self.tcp_port = 5000 + cam_id
+        self.process = None
+        self.frame_queue = queue.Queue(maxsize=1)
+        self.running = False
+        self.thread = None
+
+    def _get_gstreamer_command(self):
+        udp_ports = [9201, 9202, 9203, 9204, 9205]
+        port = udp_ports[self.cam_id - 1]
+
+        return [
+            "gst-launch-1.0",
+            "udpsrc", f"address=192.168.123.{self.ip_last_segment}", f"port={port}",
+            "!", "application/x-rtp,media=video,encoding-name=H264",
+            "!", "rtph264depay",
+            "!", "h264parse",
+            "!", "avdec_h264",
+            "!", "videoconvert",
+            "!", f"video/x-raw,width={self.width},height={self.height},format=BGR",
+            "!", "tcpserversink", "host=127.0.0.1", f"port={self.tcp_port}"
+        ]
+
+    def start(self):
+        cmd = self._get_gstreamer_command()
+        print(f"Launching external GStreamer process...")
+        try:
+            self.process = subprocess.Popen(cmd, stderr=subprocess.PIPE, bufsize=0)
+            self.running = True
+
+            # Start background socket reader thread
+            self.thread = threading.Thread(target=self._socket_reader_loop, daemon=True)
+            self.thread.start()
+            return True
+        except Exception as e:
+            print(f"Failed to start GStreamer process: {e}")
+            return False
+
+    def _socket_reader_loop(self):
+        frame_size = self.width * self.height * 3  # BGR = 3 bytes per pixel
+        time.sleep(2.0)
+
+        try:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.connect(("127.0.0.1", self.tcp_port))
+            sock.settimeout(1.0)
+            print(f"Successfully bridged to GStreamer via local TCP port {self.tcp_port}")
+
+            while self.running:
+                raw_frame = b""
+                while len(raw_frame) < frame_size and self.running:
+                    chunk = sock.recv(frame_size - len(raw_frame))
+                    if not chunk:
+                        print("GStreamer connection closed.")
+                        return
+                    raw_frame += chunk
+
+                if len(raw_frame) != frame_size:
+                    continue
+
+                # Reconstruct raw bytes into image array
+                frame = np.frombuffer(raw_frame, dtype=np.uint8)
+                frame = frame.reshape((self.height, self.width, 3))
+
+                # Update queue with newest frame
+                if not self.frame_queue.empty():
+                    try:
+                        self.frame_queue.get_nowait()
+                    except queue.Empty:
+                        pass
+                self.frame_queue.put(frame)
+
+            sock.close()
+        except Exception as e:
+            if self.running:
+                print(f"Socket camera reader error: {e}")
+
+    def read(self):
+        """Non-blocking retrieval of the latest frame array."""
+        try:
+            return True, self.frame_queue.get_nowait()
+        except queue.Empty:
+            return False, None
+
+    def release(self):
+        self.running = False
+        if self.process:
+            self.process.terminate()
+            try:
+                self.process.wait(timeout=2)
+            except subprocess.TimeoutExpired:
+                self.process.kill()
+        if self.thread:
+            self.thread.join(timeout=1.0)
+
+
 def load_policy(path):
     """Load the policy from a .pt file"""
     print(f"Loading policy from {path}...")
@@ -34,8 +146,7 @@ def load_policy(path):
 
 
 def send_action_command(sock, actions):
-    """
-    Send action command to the robot.
+    """Send action command to the robot.
 
     Args:
         sock: socket connection
@@ -54,7 +165,6 @@ def send_command(sock, x, y, r):
     code = 1  # Command code
     data = struct.pack("<hfff", code, x, y, r)
     sock.sendall(data)
-    # print(f"Sent command: x={x:.2f}, y={y:.2f}, r={r:.2f}")
 
 
 def receive_observations(sock) -> torch.Tensor:
@@ -81,7 +191,6 @@ def receive_observations(sock) -> torch.Tensor:
         # Unpack observations
         observations = struct.unpack(f"{obs_count}f", obs_data)
         return torch.tensor(observations, dtype=torch.float32)
-
     except socket.timeout:
         return None
     except Exception as e:
@@ -89,23 +198,24 @@ def receive_observations(sock) -> torch.Tensor:
         return None
 
 
-# TODO: Implement camera data retrieval
-def get_camera_data(camera_data) -> dict:
+def get_camera_data(camera_frame) -> dict:
     """Convert camera data to a dict for the NavController."""
-    camera = ...
+    if camera_frame is not None:
+        # Split side-by-side wide stereo stitched frame (1856x800) down the middle
+        h, w, _ = camera_frame.shape
+        left_bgr = camera_frame[:, :w // 2]
 
-    if camera is not None:
-        rgb_data = ...
-        distance_data = ...
-        return {"camera_rgb": rgb_data, "camera_distance": distance_data}
+        # Convert to RGB layout required by tracking algorithms
+        left_rgb = cv2.cvtColor(left_bgr, cv2.COLOR_BGR2RGB)
+        distance_data = None
 
+        return {"camera_rgb": left_rgb, "camera_distance": distance_data}
     else:
         return None
 
 
 def get_observation_dict(obs: torch.Tensor) -> dict:
     """Convert observation tensor to a dictionary for easier access."""
-
     obs_dict = {
         "base_ang_vel": obs[:, 0:3].cpu().numpy().flatten(),
         "projected_gravity": obs[:, 3:6].cpu().numpy().flatten(),
@@ -123,6 +233,11 @@ def main():
 
     print(f"Connecting to robot at {host}:{port}...")
 
+    cam = SocketGStreamerCamera(cam_id=1, width=1856, height=800, ip_last_segment="14")
+    if not cam.start():
+        print("Critical Error: GStreamer pipeline failed to initiate.")
+        sys.exit(1)
+
     try:
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
             sock.connect((host, port))
@@ -135,9 +250,13 @@ def main():
             nav_controller_count = LOOP_FREQ / NAV_CONTROLLER_FREQ
 
             # --- Initialize NavController
-            # TODO: Go1's camera parameters
-            camera_params = {}
-            tag_size = 0.16  # TODO: Actual tag size in meters
+            camera_params = {
+                "fx": 525.0,
+                "fy": 525.0,
+                "cx": 464.0,
+                "cy": 400.0,
+            }
+            tag_size = 0.16
 
             nav_controller = NavController(
                 camera_params=camera_params,
@@ -146,7 +265,6 @@ def main():
             )
 
             command = np.zeros(3, dtype=np.float32)  # Initialize command
-
             step_count = 0
             start_time = time.time()
             last_obs_time = time.time()
@@ -159,37 +277,33 @@ def main():
                 observations = receive_observations(sock)
                 if observations is not None:
                     last_obs_time = time.time()
-
                     observations_dict = get_observation_dict(observations)
 
                     # update NavController with observations
                     nav_controller.update(observations_dict)
-
                 else:
                     # No observations received - check if connection is still alive
                     if time.time() - last_obs_time > 1.0:
                         print("No observations received for 1 second - connection may be lost")
                         break
 
-                # --- Camera
-                # TODO: Get images
-                camera_data = ...  # This should get camera images at the frequency you want frame rate
-                camera_dict = get_camera_data(camera_data)
-                if camera_dict is not None:
-                    nav_controller.update(camera_dict)
+                # --- Camera Data Retrieval
+                ret, frame = cam.read()
+                if ret:
+                    camera_dict = get_camera_data(frame)
+                    if camera_dict is not None:
+                        nav_controller.update(camera_dict)
 
                 # --- Commands
                 if step_count % nav_controller_count == 0:
                     command = nav_controller.get_command()
                     send_command(sock, *command)
 
-                # Print status every 2 seconds
+                # Print status summary
                 if step_count % 100 == 0:
                     elapsed = time.time() - start_time
                     freq = step_count / elapsed if elapsed > 0 else 0
-                    print(
-                        f"Step {step_count}, Frequency: {freq:.1f} Hz, Command: [{command[0]:.3f}, {command[1]:.3f}, {command[2]:.3f}...]"
-                    )
+                    print(f"Step {step_count}, Frequency: {freq:.1f} Hz, Command: [{command[0]:.3f}, {command[1]:.3f}, {command[2]:.3f}]")
 
                 # Maintain 50 Hz loop rate
                 step_count += 1
@@ -200,15 +314,16 @@ def main():
                     time.sleep(sleep_time)
 
     except ConnectionRefusedError:
-        print("Could not connect to robot. Make sure the robot is running with:")
-        print("python deploy.py --server")
-
+        print("Could not connect to robot. Make sure the robot is running with: python deploy.py --server")
     except KeyboardInterrupt:
         print(f"\nExternal policy control stopped after {step_count} steps")
-
     except Exception as e:
         print(f"Error during policy control: {e}")
+    finally:
+        print("Shutting down external processes and closing stream connections...")
+        cam.release()
 
 
 if __name__ == "__main__":
     main()
+

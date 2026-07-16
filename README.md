@@ -126,7 +126,9 @@ On one of the robot's Jetsons, we have been using 192.168.123.14, run the follow
    make
    ```
 3. **Set the python path for the SDK**
+   ```bash
    echo "export PYTHONPATH="/home/unitree/MRSS/go1-deploy/unitree_legged_sdk/lib/python/arm64/:${PYTHONPATH}"" >> ~/.bashrc
+   ```
 
 4. **Test the installation:**
    1. **Kill sport mode** (required to prevent command conflicts):
@@ -143,19 +145,19 @@ On one of the robot's Jetsons, we have been using 192.168.123.14, run the follow
 Conda is installed on the robots and there should be an existing environment called depl.
 If you need to reinstall:
 
-1. ** Install conda**
+1. **Install conda**
    ```bash
    curl -L -o miniforge.sh https://github.com/conda-forge/miniforge/releases/latest/download/Miniforge3-Linux-aarch64.sh \
     && bash miniforge.sh -b -p /root/miniforge3 && rm miniforge.sh
     ```
 
-2. **Create the environment**
+2. **Create the environment:**
    ```bash
    cd /home/unitree/MRSS/go1-deploy
    conda env create -f environment.yml
    ```
 
-3. **Activate environment**
+3. **Activate environment:**
    ```bash
    conda activate depl
    ```

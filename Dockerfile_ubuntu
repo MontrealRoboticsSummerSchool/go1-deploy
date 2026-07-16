@@ -1,0 +1,59 @@
+ARG BASE_IMAGE=nvidia/cuda:12.2.0-base-ubuntu22.04
+FROM ${BASE_IMAGE}
+
+SHELL ["/bin/bash", "-c"]
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    cmake \
+    git \
+    curl \
+    ca-certificates \
+    libgomp1 \
+    pkg-config \
+    libgl1-mesa-glx \
+    libglib2.0-0 \
+    libgstreamer1.0-dev \
+    libgstreamer-plugins-base1.0-dev \
+    libgstreamer-plugins-bad1.0-dev \
+    libgstreamer-plugins-good1.0-dev \
+    gstreamer1.0-plugins-base \
+    gstreamer1.0-plugins-good \
+    gstreamer1.0-plugins-bad \
+    gstreamer1.0-plugins-ugly \
+    gstreamer1.0-tools \
+    gstreamer1.0-libav \
+    gstreamer1.0-x \
+    gstreamer1.0-alsa \
+    gstreamer1.0-gl \
+    gstreamer1.0-gtk3 \
+    gstreamer1.0-qt5 \
+    gstreamer1.0-pulseaudio \
+    libboost-all-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app/sdk
+COPY ./unitree_legged_sdk .
+RUN mkdir build && cd build && cmake -DCMAKE_EXE_LINKER_FLAGS="-no-pie" ../ && make
+
+WORKDIR /root
+RUN curl -L -o miniforge.sh https://github.com/conda-forge/miniforge/releases/latest/download/Miniforge3-Linux-x86_64.sh \
+    && bash miniforge.sh -b -p /root/miniforge3 \
+    && rm miniforge.sh
+
+RUN /root/miniforge3/bin/conda init
+ENV PATH="/root/miniforge3/bin:${PATH}"
+
+WORKDIR /app
+COPY environment_ctrl.yml /app/
+
+RUN conda env create -f environment_ctrl.yml
+
+ENV PATH="/root/miniforge3/envs/ctrl/bin:${PATH}"
+ENV CONDA_DEFAULT_ENV="ctrl"
+
+ENV PYTHONPATH="/app/sdk/lib/python/amd64/:${PYTHONPATH}"
+RUN echo 'export PYTHONPATH="/app/sdk/lib/python/amd64/":"${PYTHONPATH}"' >> /root/.bashrc
+RUN echo 'export PYTHONPATH="/workspace/":"${PYTHONPATH}"' >> /root/.bashrc
+CMD ["/bin/bash"]

@@ -49,3 +49,25 @@ services:
     cap_add:
       - SYS_NICE
 
+  go1-deploy_ubuntu:
+    build:
+      context: .
+      dockerfile: Dockerfile_ubuntu
+    image: go1-policy-deploy:latest
+    container_name: go1_deploy_container
+    volumes:
+      - .:/workspace
+    working_dir: /workspace
+    entrypoint: [ "/bin/bash", "-c", "source /root/.bashrc && exec /bin/bash" ]
+    command: ""
+    stdin_open: true
+    tty: true
+    restart: always
+    network_mode: "host"
+    pid: "host"
+    runtime: nvidia
+    privileged: true
+    ulimits:
+      rtprio: 99
+    cap_add:
+      - SYS_NICE
